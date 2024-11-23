@@ -1,0 +1,29 @@
+The graphs show the relationship between the number of users in the training dataset and two performance metrics: welfare and accuracy, for two models: Logistic Regression and Random Forest.
+
+1. Observations for Logistic Regression
+
+- Welfare generally increases as the number of users increases, reaching a plateau after around 10 users (with slight movement)
+- The welfare stabilizes at around 1.1 meaning the avg welfare of the users is around this value.
+- Logistic Regression becomes more effective at aligning predictions with true utility as the dataset grows. The early plateau suggests that the model quickly learns from a relatively small amount of data (5 users are wnough for aroung 90% accuracy).
+- Accuracy improves significantly with more users (but also reaches plateu) rising steeply initially and leveling off near 95% (being able to generalize well)
+- Logistic Regression is highly effective in this problem, achieving near-optimal classification accuracy with sufficient training data.
+
+2. Observations for Random Forest
+
+- Welfare increases with the number of users but exhibits more fluctuation compared to Logistic Regression.
+- The welfare values fluctuate between 1.0 and 1.1 even at higher dataset sizes. This means it did not reach the hieght of welfare as the logistic reggression.
+- Random Forest may overfit on smaller datasets or require more data to achieve the same stability as Logistic Regression in predicting utility (suggesting that Random Forest requires more data to perform well)
+- Accuracy steadily improves with more users, rising from around 65% for small datasets to about 85% for larger datasets.
+- Random Forest, while powerful, appears less efficient at learning from small datasets compared to Logistic Regression in this scenario.
+
+3. Possible Explanations
+
+- Model Characteristics - Logistic Regression works well for linearly separable data, which might align with the dataset's underlying structure (utility modeled as an inner product).
+Random Forest, while more flexible, may struggle with smaller datasets or noise in this specific task.
+- Size Sensitivity - Logistic Regression reaches peak performance with fewer users, while Random Forest requires more users to generalize effectively.
+- Random Forest's welfare fluctuations could be due to its ensemble nature (averaging multiple trees), which may not align perfectly with the underlying utility function for small datasets.
+
+4. Conclusion
+
+Logistic Regression is the better model for this specific task, achieving higher and more stable welfare and accuracy with fewer users.
+Random Forest requires more data to achieve reasonable accuracy and welfare but remains less effective overall in this simulation.
