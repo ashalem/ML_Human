@@ -18,7 +18,7 @@ The graphs show the relationship between the number of users in the training dat
 
 3. Possible Explanations
 
-- Model Characteristics - Logistic Regression works well for linearly separable data, which might align with the dataset's underlying structure (utility modeled as an inner product).
+- Model Characteristics - Logistic Regression works well for linearly separable data, which might align with the dataset's underlying structure (utility modeled as an inner product - directly learn the linear decision boundary).
 Random Forest, while more flexible, may struggle with smaller datasets or noise in this specific task.
 - Size Sensitivity - Logistic Regression reaches peak performance with fewer users, while Random Forest requires more users to generalize effectively.
 - Random Forest's welfare fluctuations could be due to its ensemble nature (averaging multiple trees), which may not align perfectly with the underlying utility function for small datasets.
