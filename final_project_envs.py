@@ -54,7 +54,7 @@ class UniversityEnvironment:
           SupplierParams(
               name=f"Supplier_{i}",
               diff_vector=np.array([
-                  40 if j == idx1 else -20 if j == idx2 else -40 if j == idx3 else 0
+                  50 if j == idx1 else -25 if j == idx2 else -40 if j == idx3 else 0
                   for j in range(n_features)
               ]),
           )
@@ -279,7 +279,8 @@ class UniversityEnvironment:
         applicant_features: np.ndarray,
         desired_faculty: int,
         applicant_model: ApplicantMLP = None,
-        applicant_id: int = None
+        applicant_id: int = None,
+        with_university_supplier: bool = False
     ) -> Tuple[int, np.ndarray]:
         """Modified to include university as supplier option"""
         applicant_model.eval()
@@ -293,7 +294,7 @@ class UniversityEnvironment:
             # Try each supplier
             for i, supplier in enumerate(self.suppliers):
                 modified_features_unclipped = original_features + torch.FloatTensor(supplier.diff_vector)
-                modified_features = np.clip(modified_features_unclipped, 40, 100)
+                modified_features = np.clip(modified_features_unclipped, 0, 100)
                 
                 probabilities = applicant_model(modified_features)
                 prob_desired = probabilities[0, int(desired_faculty)].item()
@@ -304,7 +305,7 @@ class UniversityEnvironment:
                     best_modified_features = modified_features.squeeze(0).numpy()
         
         # Check if university supplier should be used
-        if self.enable_university_supplier and (best_probability < 0.5 or best_supplier_idx == -1):
+        if with_university_supplier and self.enable_university_supplier and (best_probability < 0.5 or best_supplier_idx == -1):
             if applicant_id is not None:
                 self.university_applicants.add(applicant_id)
             return (-1, applicant_features)  # -1 indicates university supplier
@@ -337,9 +338,9 @@ class UniversityEnvironment:
             predicted_grades = model(current_features)
 
             # Choose best faculty for each applicant based on predicted grades
-            chosen_faculties = torch.argmax(predicted_grades).numpy()
+            chosen_faculties = torch.argmax(predicted_grades, dim=1).numpy()
 
-        return chosen_faculties, predicted_grades
+        return chosen_faculties, predicted_grades.numpy()
         
     def choose_supplier_for_applicant_fully_exposed(
         self,
@@ -348,10 +349,9 @@ class UniversityEnvironment:
         trained_model: UniversityMLP
     ) -> Tuple[int, np.ndarray]:
         """
-        Choose the best supplier for an applicant based on faculty utility vectors instead of a model.
+        Choose the best supplier for an applicant based on direct access to the university model.
 
-        The function ensures that the modified features lead to the **desired faculty** having the
-        highest grade among all faculties.
+        The function finds the supplier that maximizes the predicted grade for the desired faculty.
 
         Args:
             applicant_features: The current features of the applicant
@@ -362,36 +362,40 @@ class UniversityEnvironment:
             Tuple of (chosen_supplier_idx, modified_features)
         """
         best_supplier_idx = -1
-        best_modified_features = None
+        best_modified_features = applicant_features.copy()
+        best_score = float('-inf')
 
-        # Get final assignments and grades using modified features
-        chosen_faculty, predicted_grades = self.assign_applicants_to_faculties_fully_exposed(
-            trained_model,
-            applicant_features
-        )
+        # Get the baseline score without modifications
+        trained_model.eval()
+        with torch.no_grad():
+            baseline_features = torch.FloatTensor(applicant_features).unsqueeze(0)
+            baseline_predictions = trained_model(baseline_features)
+            # Convert desired_faculty to int to ensure proper indexing
+            desired_faculty_idx = int(desired_faculty)
+            baseline_score = baseline_predictions[0, desired_faculty_idx].item()
+        
+        # Only make changes if they improve the score for the desired faculty
+        best_score = baseline_score
 
-        # If the desired faculty is already the best, return without any modifications
-        if chosen_faculty == desired_faculty:
-            return -1, applicant_features
-
-        # Iterate over suppliers and check if applying their modifications makes the desired faculty the best
+        # Iterate over suppliers to find the one that maximizes the predicted grade for desired faculty
         for i, supplier in enumerate(self.suppliers):
             # Apply supplier's modifications to features
             modified_features = applicant_features + supplier.diff_vector
-            modified_features = np.clip(modified_features, 40, 100)  # Ensure within valid range
+            modified_features = np.clip(modified_features, 0, 100)  # Ensure within valid range
 
-             # Get final assignments and grades using modified features
-            chosen_faculty, predicted_grades = self.assign_applicants_to_faculties_fully_exposed(
-                trained_model,
-                modified_features
-            )
-
-            # Check if the desired faculty is now the highest-ranked one
-            if chosen_faculty == desired_faculty:
-                return i, modified_features  # Return the first supplier that achieves this
-
-        # If no supplier achieves the goal, return the original features
-        return -1, applicant_features
+            # Get the predicted grades for the modified features
+            with torch.no_grad():
+                mod_features_tensor = torch.FloatTensor(modified_features).unsqueeze(0)
+                predictions = trained_model(mod_features_tensor)
+                score_for_desired = predictions[0, desired_faculty_idx].item()
+            
+            # Check if this supplier improves the score for the desired faculty
+            if score_for_desired > best_score:
+                best_score = score_for_desired
+                best_supplier_idx = i
+                best_modified_features = modified_features.copy()
+        
+        return best_supplier_idx, best_modified_features
     
     
     def recommend(

@@ -292,21 +292,41 @@ def get_modified_features(env, applicants_df, applicant_model, use_feature_knowl
         student_features = applicants_df.iloc[idx][feature_cols].values
         desired_faculty = applicants_df.iloc[idx]['desired_faculty']
         
-        # If not using feature knowledge, start with zero features
-        base_features = student_features if use_feature_knowledge else np.zeros_like(student_features)
+        # If not using feature knowledge, start with zero or low-value features
+        if use_feature_knowledge:
+            base_features = student_features.copy()
+        else:
+            # Start with a low baseline rather than zero
+            base_features = np.ones_like(student_features) * 10
         
         applicant_id = idx if track_university_applicants else None
-        _, modified_student_features = env.choose_supplier_for_applicant(
+        supp_id, modified_student_features = env.choose_supplier_for_applicant(
             base_features,
             desired_faculty,
             applicant_model,
-            applicant_id=applicant_id
+            applicant_id=applicant_id,
+            with_university_supplier=track_university_applicants
         )
         
-        # If not using feature knowledge, add original features after supplier modification
+        # If not using feature knowledge, perform a weighted blend of original features
+        # with the supplier modifications to avoid double-counting or extreme values
         if not use_feature_knowledge:
-            modified_student_features = modified_student_features + student_features
+            # Get non-zero indices from the supplier modification
+            # to identify which features were modified
+            mod_vector = modified_student_features - base_features
+            modified_indices = np.abs(mod_vector) > 1e-5
             
+            result_features = np.zeros_like(student_features)
+            
+            # For modified features, use the supplier modification
+            result_features[modified_indices] = modified_student_features[modified_indices]
+            
+            # For unmodified features, use the original student features
+            result_features[~modified_indices] = student_features[~modified_indices]
+            
+            # Ensure we stay within valid range
+            modified_student_features = np.clip(result_features, 0, 100)
+        
         modified_features.append(modified_student_features)
     
     return np.array(modified_features)
@@ -350,18 +370,22 @@ def run_no_gaming_scenario(env, model, original_features, desired_faculties, ver
     return assigned_faculties, final_grades
 
 
-def run_base_scenario(verbose=False):
+def run_experiment(verbose=False):
     """
-    Run the standard scenario with multiple applicant strategies.
+    Run a comprehensive experiment with multiple applicant strategies in a single environment.
+    
+    This function combines the base scenario, fully exposed example, and university supplier scenario.
+    All variations use the same past data and environment setup, with different approaches in
+    how applicants choose suppliers in iteration 1.
     
     Args:
         verbose: Whether to print detailed training and execution information
         
     Returns:
-        Tuple of (applicants_df, feature_cols, env, trained_model, original_features, scenario_results)
+        Tuple of (env, feature_cols, scenario_results)
     """
-    # Setup environment and train initial models
-    env, feature_cols = setup_environment()
+    # Setup environment with university supplier enabled (we'll use it only for specific variations)
+    env, feature_cols = setup_environment(use_university_supplier=True)
     past_df, trained_model = train_initial_models(env, verbose=verbose)
     
     # Generate applicants for iteration 0
@@ -370,7 +394,7 @@ def run_base_scenario(verbose=False):
         verbose=verbose
     )
     
-    # Run no gaming scenario for iteration 0
+    # Run no gaming scenario for iteration 0 - this will be our baseline
     iteration0_faculties, iteration0_grades = run_no_gaming_scenario(
         env, 
         trained_model, 
@@ -384,7 +408,7 @@ def run_base_scenario(verbose=False):
     iteration0_df['assigned_faculty'] = iteration0_faculties
     iteration0_df['final_grade'] = iteration0_grades
     
-    # Iteration 1: Student Learning
+    # Iteration 1: Student Learning with Different Strategies
     print("\n=== Iteration 1: Student Learning with Different Strategies ===")
     iteration1_applicants_df, original_features, desired_faculties = generate_applicants_data(
         env,
@@ -394,7 +418,21 @@ def run_base_scenario(verbose=False):
     # Train applicant model based on iteration 0 results
     applicant_model = env.train_applicant_model(iteration0_df, verbose=verbose)
     
-    # Get modified features with different strategies
+    # Collect results for all scenarios
+    scenario_results = {}
+    
+    # ===== Original (No Gaming) Scenario =====
+    faculties_original = env.assign_applicants_to_faculties(
+        trained_model,
+        original_features,
+        verbose=verbose
+    )
+    grades_original = env.recommend(original_features, faculties_original)
+    scenario_results["Original (No Gaming)"] = print_scenario_results(
+        "Original (No Gaming)", faculties_original, grades_original, desired_faculties
+    )
+    
+    # ===== Modified with Feature Knowledge Scenario =====
     modified_features_with_knowledge = get_modified_features(
         env, 
         iteration1_applicants_df, 
@@ -402,7 +440,17 @@ def run_base_scenario(verbose=False):
         use_feature_knowledge=True,
         verbose=verbose
     )
+    faculties_with_knowledge = env.assign_applicants_to_faculties(
+        trained_model,
+        modified_features_with_knowledge,
+        verbose=verbose
+    )
+    grades_with_knowledge = env.recommend(original_features, faculties_with_knowledge)
+    scenario_results["Modified with Feature Knowledge"] = print_scenario_results(
+        "Modified with Feature Knowledge", faculties_with_knowledge, grades_with_knowledge, desired_faculties
+    )
     
+    # ===== Modified without Feature Knowledge Scenario =====
     modified_features_without_knowledge = get_modified_features(
         env, 
         iteration1_applicants_df, 
@@ -410,232 +458,101 @@ def run_base_scenario(verbose=False):
         use_feature_knowledge=False,
         verbose=verbose
     )
-    
-    # Get assignments using different strategies
-    faculties_original = env.assign_applicants_to_faculties(
-        trained_model,
-        original_features,
-        verbose=verbose
-    )
-    
-    faculties_with_knowledge = env.assign_applicants_to_faculties(
-        trained_model,
-        modified_features_with_knowledge,
-        verbose=verbose
-    )
-    
     faculties_without_knowledge = env.assign_applicants_to_faculties(
         trained_model,
         modified_features_without_knowledge,
         verbose=verbose
     )
+    grades_without_knowledge = env.recommend(original_features, faculties_without_knowledge)
+    scenario_results["Modified without Feature Knowledge"] = print_scenario_results(
+        "Modified without Feature Knowledge", faculties_without_knowledge, grades_without_knowledge, desired_faculties
+    )
     
+    # ===== With University Reconstruction Scenario =====
     faculties_with_reconstruction = env.assign_applicants_to_faculties_with_reconstruction(
         trained_model,
         modified_features_with_knowledge,
         desired_faculties
     )
-    
-    # Calculate final grades using original features
-    grades_original = env.recommend(original_features, faculties_original)
-    grades_with_knowledge = env.recommend(original_features, faculties_with_knowledge)
-    grades_without_knowledge = env.recommend(original_features, faculties_without_knowledge)
     grades_with_reconstruction = env.recommend(original_features, faculties_with_reconstruction)
-    
-    # Print results for all strategies and collect metrics
-    scenario_results = {}
-    scenario_results["Original (No Gaming)"] = print_scenario_results(
-        "Original (No Gaming)", faculties_original, grades_original, desired_faculties
-    )
-    scenario_results["Modified with Feature Knowledge"] = print_scenario_results(
-        "Modified with Feature Knowledge", faculties_with_knowledge, grades_with_knowledge, desired_faculties
-    )
-    scenario_results["Modified without Feature Knowledge"] = print_scenario_results(
-        "Modified without Feature Knowledge", faculties_without_knowledge, grades_without_knowledge, desired_faculties
-    )
     scenario_results["With University Reconstruction"] = print_scenario_results(
         "With University Reconstruction", faculties_with_reconstruction, grades_with_reconstruction, desired_faculties
     )
     
-    return iteration1_applicants_df, feature_cols, env, trained_model, original_features, scenario_results
-
-
-def fully_exposed_example(iteration1_applicants_df, feature_cols, env, trained_model, original_features, verbose=False):
-    """
-    Run the fully exposed example scenario where students have access to university model.
-    
-    Args:
-        iteration1_applicants_df: DataFrame of applicants
-        feature_cols: List of feature column names
-        env: UniversityEnvironment instance
-        trained_model: Trained UniversityMLP model
-        original_features: Original applicant features
-        verbose: Whether to print detailed information
-        
-    Returns:
-        Dictionary of scenario results
-    """
-    print("\n=== Running Fully Exposed Example ===")
-    desired_faculties = iteration1_applicants_df['desired_faculty'].values
-    modified_features = []
-    
+    # ===== Fully Exposed Example Scenario =====
+    print("\n=== Running Fully Exposed Example Scenario ===")
+    modified_features_fully_exposed = []
     # Choose supplier with full knowledge of university model
     for idx in range(len(iteration1_applicants_df)):
         student_features = iteration1_applicants_df.iloc[idx][feature_cols].values
-        desired_faculty = iteration1_applicants_df.iloc[idx]['desired_faculty']
-
+        # Convert desired_faculty to int to ensure proper indexing
+        desired_faculty = int(iteration1_applicants_df.iloc[idx]['desired_faculty'])
         supp_id, modified_student_features = env.choose_supplier_for_applicant_fully_exposed(
             student_features,
             desired_faculty,
             trained_model,
         )
-        modified_features.append(modified_student_features)
+        modified_features_fully_exposed.append(modified_student_features)
         if verbose:
             print(f'Student {idx} chose supplier {supp_id}')
-
-    modified_features = np.array(modified_features)
-
-    # Get assignments with and without gaming
-    faculties_modified = env.assign_applicants_to_faculties(
+    
+    modified_features_fully_exposed = np.array(modified_features_fully_exposed)
+    faculties_fully_exposed = env.assign_applicants_to_faculties(
         trained_model,
-        modified_features,
+        modified_features_fully_exposed,
         verbose=verbose
     )
-
-    faculties_original = env.assign_applicants_to_faculties(
-        trained_model,
-        original_features,
-        verbose=verbose
-    )
-
-    # Calculate final grades
-    grades_original = env.recommend(original_features, faculties_original)
-    grades_modified = env.recommend(original_features, faculties_modified)
-
-    # Print results and collect metrics
-    scenario_results = {}
-    scenario_results["Original"] = print_scenario_results(
-        "Original (No Gaming)", faculties_original, grades_original, desired_faculties
-    )
+    grades_fully_exposed = env.recommend(original_features, faculties_fully_exposed)
     scenario_results["With Full University Model Access"] = print_scenario_results(
-        "With Full University Model Access", faculties_modified, grades_modified, desired_faculties
+        "With Full University Model Access", faculties_fully_exposed, grades_fully_exposed, desired_faculties
     )
     
-    # Create comparison visualizations
-    plot_scenario_comparison(scenario_results, metric='grade', 
-                           title='Effect of Full University Model Access on Mean Grade')
-    plot_scenario_comparison(scenario_results, metric='desired', 
-                           title='Effect of Full University Model Access on Students Getting Desired Faculty')
-    
-    # Faculty distribution comparison
-    faculty_distributions = [scenario_results["Original"]["faculty_distribution"], 
-                            scenario_results["With Full University Model Access"]["faculty_distribution"]]
-    plot_faculty_distribution(faculty_distributions, 
-                             ["Original", "With Full Access"], 
-                             env.n_faculties)
-    
-    return scenario_results
-
-
-def run_university_supplier_scenario(verbose=False):
-    """
-    Run scenario where university acts as a supplier.
-    
-    Args:
-        verbose: Whether to print detailed training and execution information
-        
-    Returns:
-        Tuple of (env, current_df, original_features, modified_features, final_grades, scenario_results)
-    """
-    # Setup environment with university supplier enabled
-    env, feature_cols = setup_environment(use_university_supplier=True)
-    past_df, trained_model = train_initial_models(env, verbose=verbose)
-    
-    # Generate applicants for iteration 0
-    iteration0_df, original_features, desired_faculties = generate_applicants_data(env, verbose=verbose)
-    
-    # Run no gaming scenario for baseline
-    iteration0_faculties, iteration0_grades = run_no_gaming_scenario(
-        env,
-        trained_model,
-        original_features,
-        desired_faculties,
-        verbose=verbose
-    )
-    
-    # Iteration 1: Students learn and choose suppliers (including university)
-    print("\n=== Iteration 1: Students Gaming with University Supplier Option ===")
-    
-    # Train applicant model on past data
-    applicant_model = env.train_applicant_model(past_df, verbose=verbose)
-    
+    # ===== University Supplier Scenario =====
+    print("\n=== Running University Supplier Scenario ===")
+    # Reset university applicants set
+    env.university_applicants = set()
     # Get modified features tracking university applicants
-    modified_features = get_modified_features(
+    modified_features_univ_supplier = get_modified_features(
         env,
-        iteration0_df,
+        iteration1_applicants_df,
         applicant_model,
         track_university_applicants=True,
         verbose=verbose
     )
-    
     # Make assignments with university supplier info
-    iteration1_faculties = env.assign_applicants_to_faculties(
+    faculties_univ_supplier = env.assign_applicants_to_faculties(
         trained_model,
-        modified_features,
+        modified_features_univ_supplier,
         desired_faculties,
-        np.arange(len(iteration0_df)),
+        np.arange(len(iteration1_applicants_df)),
         verbose=verbose
     )
-    iteration1_grades = env.recommend(original_features, iteration1_faculties)
-    
-    # Collect results
-    scenario_results = {}
-    
-    # Store baseline results
-    scenario_results["Baseline (No Gaming)"] = {
-        'mean_grade': np.mean(iteration0_grades),
-        'faculty_distribution': np.bincount(iteration0_faculties),
-        'matches': sum(f1 == f2 for f1, f2 in zip(iteration0_faculties, desired_faculties)),
-        'desired_percentage': sum(f1 == f2 for f1, f2 in zip(iteration0_faculties, desired_faculties)) / len(desired_faculties) * 100
-    }
-    
-    # Store university supplier results
+    grades_univ_supplier = env.recommend(original_features, faculties_univ_supplier)
     additional_metrics = {"Number of students who chose university as supplier": len(env.university_applicants)}
     scenario_results["University Supplier"] = print_scenario_results(
-        "University Supplier", 
-        iteration1_faculties, 
-        iteration1_grades, 
-        desired_faculties,
-        additional_metrics
+        "University Supplier", faculties_univ_supplier, grades_univ_supplier, desired_faculties, additional_metrics
     )
     
-    # Create comparison visualizations
+    # Create comparison visualizations for all scenarios
     plot_scenario_comparison(scenario_results, metric='grade', 
-                          title='Effect of University Supplier on Mean Grade')
+                           title='Comparison of Mean Grades Across Scenarios')
     plot_scenario_comparison(scenario_results, metric='desired', 
-                          title='Effect of University Supplier on Students Getting Desired Faculty')
+                           title='Comparison of Students Getting Desired Faculty Across Scenarios')
     
-    # Faculty distribution comparison
-    faculty_distributions = [scenario_results["Baseline (No Gaming)"]["faculty_distribution"], 
-                           scenario_results["University Supplier"]["faculty_distribution"]]
+    # Faculty distribution visualization
+    faculty_distributions = [results['faculty_distribution'] for results in scenario_results.values()]
     plot_faculty_distribution(faculty_distributions, 
-                            ["Baseline", "University Supplier"], 
-                            env.n_faculties)
+                             list(scenario_results.keys()), 
+                             env.n_faculties)
     
-    # Print detailed results for first 5 applicants
-    university_applicant_info = {
-        i: {"Chose university as supplier": i in env.university_applicants,
-            "Initial faculty": iteration0_faculties[i],
-            "Initial grade": iteration0_grades[i]}
-        for i in range(5)
-    }
+    # Generate comparison table
+    comparison_table = generate_scenario_comparison_table(scenario_results)
+    print("\nScenario Comparison Summary:")
+    print(comparison_table)
     
-    print_detailed_applicant_results(
-        range(5),
-        desired_faculties,
-        iteration1_faculties,
-        iteration1_grades,
-        university_applicant_info
-    )
-    
-    return env, iteration0_df, original_features, modified_features, iteration1_grades, scenario_results 
+    return env, feature_cols, original_features, {
+        "Modified with Knowledge": modified_features_with_knowledge,
+        "Modified without Knowledge": modified_features_without_knowledge,
+        "Fully Exposed": modified_features_fully_exposed,
+        "University Supplier": modified_features_univ_supplier
+    }, scenario_results 
