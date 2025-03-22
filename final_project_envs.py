@@ -25,8 +25,8 @@ class SupplierParams:
 class UniversityEnvironment:
     def __init__(
         self,
-        n_features: int = 9,
-        n_faculties: int = 3,
+        n_features: int = 8,
+        n_faculties: int = 5,
         n_suppliers: int = 20,
         noise_range: Tuple[float, float] = (0,0),
         enable_university_supplier: bool = False
@@ -54,12 +54,12 @@ class UniversityEnvironment:
           SupplierParams(
               name=f"Supplier_{i}",
               diff_vector=np.array([
-                  50 if j == idx1 else -25 if j == idx2 else -40 if j == idx3 else 0
+                  30 if j == idx1 else 20 if j == idx2 else -30 if j == idx3 else 0 if j == idx4 else 0
                   for j in range(n_features)
               ]),
           )
           for i in range(n_suppliers)
-          for idx1, idx2, idx3 in [np.random.choice(n_features, size=3, replace=False)]
+          for idx1, idx2, idx3, idx4 in [np.random.choice(n_features, size=4, replace=False)]
         ]
         
         self.past_applicants_df = None
@@ -74,7 +74,7 @@ class UniversityEnvironment:
         vector = np.random.uniform(0, 0.2, size)  # Base small values
         
         # Randomly select ~40% of elements to be higher values
-        high_value_indices = np.random.choice(size, size=3, replace=False)
+        high_value_indices = np.random.choice(size, size=2, replace=False)
         vector[high_value_indices] = np.random.uniform(0.6, 1, size=len(high_value_indices))
         
         # Normalize to sum to 1 while preserving relative differences
@@ -85,8 +85,10 @@ class UniversityEnvironment:
         Generate features using truncated normal distribution between 55 and 100.
         Uses mean at center of range (77.5) and std that makes the distribution fit well in the range.
         """
-        # Generate features with normal distribution between 40 and 100
-        features = np.random.uniform(0, 100, (n_samples, self.n_features))
+        # Generate features with normal distribution between 0 and 100
+        features = np.random.normal(55, 40, (n_samples, self.n_features))
+        features = np.clip(features, 0, 100)
+        # features = np.random.uniform(0, 100, (n_samples, self.n_features))
         
         return features
     
