@@ -50,7 +50,7 @@ def plot_scenario_comparison(scenarios_data, metric='grade', title=None, figsize
         ylabel = 'Mean Grade'
         title = title or 'Comparison of Mean Grades Across Scenarios'
         color = 'skyblue'
-    else:  # metric == 'desired'
+    else: 
         values = [data['desired_percentage'] for data in scenarios_data.values()]
         ylabel = 'Students Getting Desired Faculty (%)'
         title = title or 'Percentage of Students Getting Desired Faculty'
@@ -59,18 +59,15 @@ def plot_scenario_comparison(scenarios_data, metric='grade', title=None, figsize
     fig, ax = plt.subplots(figsize=figsize)
     bars = ax.bar(scenario_names, values, color=color, alpha=0.7)
     
-    # Add value labels on top of bars
     for bar in bars:
         height = bar.get_height()
         ax.text(bar.get_x() + bar.get_width()/2., height + 0.5,
                 f'{height:.1f}', ha='center', va='bottom')
     
-    # Set labels and title
     ax.set_xlabel('Scenario')
     ax.set_ylabel(ylabel)
     ax.set_title(title)
     
-    # Rotate x-axis labels for better readability if needed
     plt.xticks(rotation=15, ha='right')
     plt.tight_layout()
     
@@ -95,7 +92,6 @@ def plot_faculty_distribution(faculty_distributions, scenario_names, n_faculties
     
     fig, ax = plt.subplots(figsize=figsize)
     
-    # Ensure all distributions have same length
     distributions = []
     for dist in faculty_distributions:
         if len(dist) < n_faculties:
@@ -107,7 +103,6 @@ def plot_faculty_distribution(faculty_distributions, scenario_names, n_faculties
     faculty_indices = np.arange(n_faculties)
     width = 0.8 / len(distributions)
     
-    # Plot bars for each scenario, side by side
     for i, (dist, name) in enumerate(zip(distributions, scenario_names)):
         positions = faculty_indices + (i - len(distributions)/2 + 0.5) * width
         bars = ax.bar(positions, dist, width, label=name, alpha=0.7)
@@ -168,7 +163,7 @@ def print_scenario_results(scenario_name, faculties, grades, desired_faculties, 
         for metric_name, metric_value in additional_metrics.items():
             print(f"{metric_name}: {metric_value}")
     
-    # Return the calculated metrics for potential visualization
+    # Return the calculated metrics
     return {
         'mean_grade': np.mean(grades),
         'faculty_distribution': np.bincount(faculties),
@@ -296,7 +291,6 @@ def get_modified_features(env, applicants_df, applicant_model, use_feature_knowl
         if use_feature_knowledge:
             base_features = student_features.copy()
         else:
-            # Start with a low baseline rather than zero
             base_features = np.ones_like(student_features) * 10
         
         applicant_id = idx if track_university_applicants else None
@@ -311,20 +305,16 @@ def get_modified_features(env, applicants_df, applicant_model, use_feature_knowl
         # If not using feature knowledge, perform a weighted blend of original features
         # with the supplier modifications to avoid double-counting or extreme values
         if not use_feature_knowledge:
-            # Get non-zero indices from the supplier modification
-            # to identify which features were modified
             mod_vector = modified_student_features - base_features
             modified_indices = np.abs(mod_vector) > 1e-5
             
             result_features = np.zeros_like(student_features)
             
-            # For modified features, use the supplier modification
             result_features[modified_indices] = modified_student_features[modified_indices]
             
             # For unmodified features, use the original student features
             result_features[~modified_indices] = student_features[~modified_indices]
             
-            # Ensure we stay within valid range
             modified_student_features = np.clip(result_features, 0, 100)
         
         modified_features.append(modified_student_features)
@@ -349,7 +339,6 @@ def run_no_gaming_scenario(env, model, original_features, desired_faculties, ver
     if verbose:
         print("\n=== Running No Gaming Scenario ===")
     
-    # Assign faculties using original features
     assigned_faculties = env.assign_applicants_to_faculties(
         model,
         original_features,
@@ -359,7 +348,6 @@ def run_no_gaming_scenario(env, model, original_features, desired_faculties, ver
     # Calculate final grades
     final_grades = env.recommend(original_features, assigned_faculties)
     
-    # Print results
     print_scenario_results(
         "No Gaming", 
         assigned_faculties, 
@@ -384,7 +372,7 @@ def run_experiment(verbose=False):
     Returns:
         Tuple of (env, feature_cols, scenario_results)
     """
-    # Setup environment with university supplier enabled (we'll use it only for specific variations)
+    # University Enabled Environment (we'll use it only for specific variations)
     env, feature_cols = setup_environment(use_university_supplier=True)
     past_df, trained_model = train_initial_models(env, verbose=verbose)
     
