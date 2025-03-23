@@ -1,4 +1,5 @@
 import numpy as np
+np.random.seed(42)
 import pandas as pd
 import torch
 import torch.nn as nn
@@ -14,7 +15,6 @@ class FacultyParams:
     """Parameters for each faculty"""
     name: str
     utility_vector: np.ndarray  # Hidden vector that determines student success
-    capacity: int  # Number of spots available (can be infinite)
 
 @dataclass
 class SupplierParams:
@@ -25,7 +25,7 @@ class SupplierParams:
 class UniversityEnvironment:
     def __init__(
         self,
-        n_features: int = 8,
+        n_features: int = 7,
         n_faculties: int = 5,
         n_suppliers: int = 20,
         noise_range: Tuple[float, float] = (0,0),
@@ -36,25 +36,21 @@ class UniversityEnvironment:
         self.n_suppliers = n_suppliers
         self.noise_range = noise_range
         self.enable_university_supplier = enable_university_supplier
-        self.university_applicants = set()  # Track applicants who chose university as supplier
+        self.university_applicants = set()
         
-        # Initialize faculties with random utility vectors
-        # Initialize faculties with normalized random utility vectors
         self.faculties = [
             FacultyParams(
-                name=f"faculty_{i}",  # Using the predefined faculty names
+                name=f"faculty_{i}",
                 utility_vector=self._create_normalized_vector(n_features),
-                capacity=np.inf  # As per description, infinite capacity
             )
             for i in range(n_faculties)
         ] 
         
-        # Initialize suppliers with random modification vectors
         self.suppliers = [
           SupplierParams(
               name=f"Supplier_{i}",
               diff_vector=np.array([
-                  30 if j == idx1 else 20 if j == idx2 else -30 if j == idx3 else 0 if j == idx4 else 0
+                  30 if j == idx1 else -20 if j == idx2 else 0 if j == idx3 else 0 if j == idx4 else 0
                   for j in range(n_features)
               ]),
           )
@@ -66,38 +62,21 @@ class UniversityEnvironment:
         self.current_applicants_df = None
 
     def _create_normalized_vector(self, size: int) -> np.ndarray:
-        """
-        Create a normalized random vector of given size.
-        Normalization ensures ||vector|| = 1
-        """
-        # Create vector with some high and some low values
-        vector = np.random.uniform(0, 0.2, size)  # Base small values
+        vector = np.random.uniform(0, 0.2, size)  
+        high_value_indices = np.random.choice(size, size=4, replace=False)
+        vector[high_value_indices] = np.random.uniform(0.8, 1, size=len(high_value_indices))
         
-        # Randomly select ~40% of elements to be higher values
-        high_value_indices = np.random.choice(size, size=2, replace=False)
-        vector[high_value_indices] = np.random.uniform(0.6, 1, size=len(high_value_indices))
-        
-        # Normalize to sum to 1 while preserving relative differences
         return vector / np.sum(vector)
     
     def _generate_truncated_normal_features(self, n_samples: int) -> np.ndarray:
-        """
-        Generate features using truncated normal distribution between 55 and 100.
-        Uses mean at center of range (77.5) and std that makes the distribution fit well in the range.
-        """
-        # Generate features with normal distribution between 0 and 100
-        features = np.random.normal(55, 40, (n_samples, self.n_features))
+        features = np.random.normal(55, 20, (n_samples, self.n_features))
         features = np.clip(features, 0, 100)
-        # features = np.random.uniform(0, 100, (n_samples, self.n_features))
-        
         return features
     
     def generate_past_applicants(
         self,
         n_applicants: int = 100
     ) -> pd.DataFrame:
-        """Generate dataset of past applicants with their outcomes"""
-        # Generate random feature vectors
         features = self._generate_truncated_normal_features(n_applicants)
         
         # Randomly assign faculty for each applicant
@@ -113,10 +92,7 @@ class UniversityEnvironment:
         # Calculate base grades using matrix multiplication
         base_grades = np.sum(features * faculty_vectors_per_applicant, axis=1)
         
-        # Generate noise for all applicants at once
         noise = np.random.uniform(*self.noise_range, size=n_applicants)
-        
-        # Calculate final grades
         grades = base_grades + noise
             
         df['final_grade'] = grades
@@ -127,11 +103,9 @@ class UniversityEnvironment:
         self,
         n_applicants: int = 100
     ) -> pd.DataFrame:
-        """Generate dataset of current applicants"""
         # Generate random feature vectors
         features = self._generate_truncated_normal_features(n_applicants)
         
-        # Create DataFrame
         feature_cols = [f"feature_{i}" for i in range(self.n_features)]
         df = pd.DataFrame(features, columns=feature_cols)
         
@@ -156,15 +130,11 @@ class UniversityEnvironment:
         Returns:
             Reconstructed original feature vectors
         """
-        # Calculate global mean vector
         global_mean = np.mean(modified_features, axis=0)
         
-        # Initialize reconstructed features array
         reconstructed_features = np.zeros_like(modified_features)
         
-        # Process each faculty group
         for faculty in range(self.n_faculties):
-            # Get indices of students who desire this faculty
             faculty_mask = desired_faculties == faculty
             if not np.any(faculty_mask):
                 continue
@@ -188,17 +158,6 @@ class UniversityEnvironment:
         modified_features: np.ndarray,
         desired_faculties: np.ndarray
     ) -> np.ndarray:
-        """
-        Assign applicants to faculties using reconstructed original features.
-        
-        Args:
-            model: Trained UniversityMLP model
-            modified_features: Modified features of current applicants
-            desired_faculties: Array of desired faculty indices
-            
-        Returns:
-            Array of assigned faculty indices
-        """
         # First reconstruct the approximate original features
         reconstructed_features = self.reconstruct_original_features(modified_features, desired_faculties)
         
@@ -216,16 +175,6 @@ class UniversityEnvironment:
         past_data: pd.DataFrame = None,
         verbose: bool = False
     ) -> ApplicantMLP:
-        """
-        Train applicant model on past data
-        
-        Args:
-            past_data: Optional past data to train on. If None, uses self.past_applicants_df
-            verbose: Whether to print training progress
-            
-        Returns:
-            Trained ApplicantMLP model
-        """
         if past_data is None:
             past_data = self.past_applicants_df
         
@@ -241,10 +190,8 @@ class UniversityEnvironment:
         criterion = nn.CrossEntropyLoss()
         optimizer = torch.optim.Adam(model.parameters(), lr=0.001) # Reduced learning rate
         
-        # Train the model
         model.train()
         
-        # Keep track of losses for progress reporting
         recent_losses = []
         if verbose:
             print(f"Training applicant model...")
@@ -284,7 +231,7 @@ class UniversityEnvironment:
         applicant_id: int = None,
         with_university_supplier: bool = False
     ) -> Tuple[int, np.ndarray]:
-        """Modified to include university as supplier option"""
+        
         applicant_model.eval()
         best_probability = -1
         best_supplier_idx = -1
@@ -293,7 +240,6 @@ class UniversityEnvironment:
         original_features = torch.FloatTensor(applicant_features).unsqueeze(0)
         
         with torch.no_grad():
-            # Try each supplier
             for i, supplier in enumerate(self.suppliers):
                 modified_features_unclipped = original_features + torch.FloatTensor(supplier.diff_vector)
                 modified_features = np.clip(modified_features_unclipped, 0, 100)
@@ -306,7 +252,6 @@ class UniversityEnvironment:
                     best_supplier_idx = i
                     best_modified_features = modified_features.squeeze(0).numpy()
         
-        # Check if university supplier should be used
         if with_university_supplier and self.enable_university_supplier and (best_probability < 0.5 or best_supplier_idx == -1):
             if applicant_id is not None:
                 self.university_applicants.add(applicant_id)
@@ -322,18 +267,6 @@ class UniversityEnvironment:
         model: UniversityMLP,
         current_applicants_features: np.ndarray
     ) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        Use trained model to make faculty recommendations for current applicants.
-
-        Args:
-            model: Trained UniversityMLP model
-            current_applicants_features: Modified features of current applicants (n_applicants x n_features)
-
-        Returns:
-            Tuple of (chosen_faculties, predicted_grades)
-            - chosen_faculties: Array of faculty indices chosen for each applicant
-            - predicted_grades: Array of predicted grades for each applicant across all faculties
-        """
         model.eval()
         with torch.no_grad():
             current_features = torch.FloatTensor(current_applicants_features)
@@ -352,14 +285,7 @@ class UniversityEnvironment:
     ) -> Tuple[int, np.ndarray]:
         """
         Choose the best supplier for an applicant based on direct access to the university model.
-
         The function finds the supplier that maximizes the predicted grade for the desired faculty.
-
-        Args:
-            applicant_features: The current features of the applicant
-            desired_faculty: The faculty index the applicant wants to get into
-            trained_model: A trained UniversityMLP model
-
         Returns:
             Tuple of (chosen_supplier_idx, modified_features)
         """
@@ -372,18 +298,16 @@ class UniversityEnvironment:
         with torch.no_grad():
             baseline_features = torch.FloatTensor(applicant_features).unsqueeze(0)
             baseline_predictions = trained_model(baseline_features)
-            # Convert desired_faculty to int to ensure proper indexing
             desired_faculty_idx = int(desired_faculty)
             baseline_score = baseline_predictions[0, desired_faculty_idx].item()
         
         # Only make changes if they improve the score for the desired faculty
         best_score = baseline_score
 
-        # Iterate over suppliers to find the one that maximizes the predicted grade for desired faculty
         for i, supplier in enumerate(self.suppliers):
             # Apply supplier's modifications to features
             modified_features = applicant_features + supplier.diff_vector
-            modified_features = np.clip(modified_features, 0, 100)  # Ensure within valid range
+            modified_features = np.clip(modified_features, 0, 100)
 
             # Get the predicted grades for the modified features
             with torch.no_grad():
@@ -407,20 +331,11 @@ class UniversityEnvironment:
     ) -> np.ndarray:
         """Calculate final grades for students given their features and recommended faculties
         
-        Args:
-            student_features: Features matrix of shape (n_students, n_features)
-            recommended_faculties: Array of faculty indices of shape (n_students,)
-            
         Returns:
             Array of final grades of shape (n_students,)
         """
-        # Get utility vectors for all recommended faculties
         faculty_vectors = np.array([self.faculties[f].utility_vector for f in recommended_faculties])
-        
-        # Calculate base grades using batch matrix multiplication
         base_grades = np.sum(student_features * faculty_vectors, axis=1)
-        
-        # Generate noise for all students at once
         noise = np.random.uniform(*self.noise_range, size=len(student_features))
         
         return base_grades + noise
@@ -430,16 +345,7 @@ class UniversityEnvironment:
         past_data: pd.DataFrame = None,
         verbose: bool = False
     ) -> UniversityMLP:
-        """
-        Train university model on past data.
         
-        Args:
-            past_data: Optional past data to train on. If None, uses self.past_applicants_df
-            verbose: Whether to print training progress
-            
-        Returns:
-            Trained UniversityMLP model
-        """
         if past_data is None:
             past_data = self.past_applicants_df
         
@@ -461,19 +367,16 @@ class UniversityEnvironment:
             predicted_assigned_grades = predictions[indices, assigned_faculties]
             return torch.mean((predicted_assigned_grades - targets) ** 2)
         
-        # Train the model
         model.train()
         batch_size = 128
         n_epochs = 100
         
-        # Keep track of losses for progress reporting
         recent_losses = []
         if verbose:
             print(f"Training university model...")
         
         for epoch in range(n_epochs):
             epoch_losses = []
-            # Process in batches
             permutation = torch.randperm(len(X_train))
             for i in range(0, len(X_train), batch_size):
                 indices = permutation[i:i + batch_size]
@@ -489,15 +392,12 @@ class UniversityEnvironment:
                 loss.backward()
                 optimizer.step()
             
-            # Calculate average loss for this epoch
             avg_loss = sum(epoch_losses) / len(epoch_losses)
             
-            # Store recent losses
             recent_losses.append(avg_loss)
             if len(recent_losses) > 5:
                 recent_losses.pop(0)
             
-            # Only print progress occasionally or when loss improves significantly
             if verbose:
                 if epoch < 5:
                     print(f"Epoch {epoch}: loss = {avg_loss:.6f}")
@@ -518,19 +418,7 @@ class UniversityEnvironment:
         applicant_ids: np.ndarray = None,
         verbose: bool = False
     ) -> np.ndarray:
-        """
-        Modified to handle university supplier cases
         
-        Args:
-            model: Trained UniversityMLP model
-            current_applicants_features: Features of current applicants
-            desired_faculties: Optional array of desired faculty indices
-            applicant_ids: Optional array of applicant IDs
-            verbose: Whether to print detailed assignment information
-            
-        Returns:
-            Array of assigned faculty indices
-        """
         model.eval()
         with torch.no_grad():
             current_features = torch.FloatTensor(current_applicants_features)
